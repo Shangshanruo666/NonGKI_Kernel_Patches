@@ -1,0 +1,108 @@
+diff -urN a/fs/namespace.c b/fs/namespace.c
+--- a/fs/namespace.c	2026-08-18 17:42:13.649901900 +0800
++++ b/fs/namespace.c	2026-08-18 17:01:05.751266900 +0800
+@@ -31,6 +31,18 @@
+ #include "pnode.h"
+ #include "internal.h"
+ 
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++#include <linux/susfs_def.h>
++#endif
++
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++extern bool susfs_is_current_ksu_domain(void);
++extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;
++
++#define CL_COPY_MNT_NS BIT(25) /* used by copy_mnt_ns() */
++
++#endif
++
+ /* Maximum number of mounts in a mount namespace */
+ unsigned int sysctl_mount_max __read_mostly = 100000;
+ 
+@@ -1079,7 +1091,19 @@
+ 		return ERR_PTR(-EINVAL);
+ 	sb = fc->root->d_sb;
+ 
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++	if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted)) {
++		if (susfs_is_current_ksu_domain()) {
++			mnt = susfs_alloc_non_unshare_ksu_vfsmnt(fc->source ?: "none");
++			goto bypass_orig_flow;
++		}
++	}
++#endif
++
+ 	mnt = alloc_vfsmnt(fc->source ?: "none");
++#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
++bypass_orig_flow:
++#endif
+ 	if (!mnt)
+ 		return ERR_PTR(-ENOMEM);
+ 
+diff -urN 1/fs/proc/task_mmu.c 2/fs/proc/task_mmu.c
+--- 1/fs/proc/task_mmu.c	2026-08-18 17:41:56.184955500 +0800
++++ 2/fs/proc/task_mmu.c	2026-08-19 10:31:27.890942100 +0800
+@@ -20,6 +20,10 @@
+ #include <linux/uaccess.h>
+ #include <linux/pkeys.h>
+ 
++#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
++#include <linux/susfs_def.h>
++#endif
++
+ #include <asm/elf.h>
+ #include <asm/tlb.h>
+ #include <asm/tlbflush.h>
+@@ -943,8 +947,17 @@
+ 
+ 	hold_task_mempolicy(priv);
+ 
+-	for (vma = priv->mm->mmap; vma;) {
++	for (vma = priv->mm->mmap; vma; vma = vma->vm_next) {
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++		if (vma->vm_file) {
++			if (vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
++				goto bypass_orig_flow;
++		}
++#endif
+ 		smap_gather_stats(vma, &mss);
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++bypass_orig_flow:
++#endif
+ 		last_vma_end = vma->vm_end;
+ 
+ 		/*
+@@ -999,7 +1012,6 @@
+ 				continue;
+ 		}
+ 		/* Case 2 above */
+-		vma = vma->vm_next;
+ 	}
+ 
+ 	show_vma_header_prefix(m, priv->mm->mmap ? priv->mm->mmap->vm_start : 0,
+@@ -1697,7 +1709,7 @@
+ 	 * will stop when we hit the end of the buffer.
+ 	 */
+ 	ret = 0;
+-	while (count && (start_vaddr < end_vaddr)) {
++    while (count && (start_vaddr < end_vaddr)) {
+ 		int len;
+ 		unsigned long end;
+ 
+@@ -1709,7 +1721,15 @@
+ 		ret = mmap_read_lock_killable(mm);
+ 		if (ret)
+ 			goto out_free;
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++		vma = find_vma(mm, start_vaddr);
++		if (vma && vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
++			goto bypass_orig_flow;
++#endif
+ 		ret = walk_page_range(start_vaddr, end, &pagemap_walk);
++#ifdef CONFIG_KSU_SUSFS_SUS_MAP
++bypass_orig_flow:
++#endif
+ 		mmap_read_unlock(mm);
+ 		start_vaddr = end;
+ 
